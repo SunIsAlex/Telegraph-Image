@@ -1,102 +1,30 @@
-import sentryPlugin from "@cloudflare/pages-plugin-sentry";
-import '@sentry/tracing';
+/**
+ * 清洁版 Middleware
+ * 移除了所有第三方监控 (Sentry) 和数据上报 (Telemetry) 逻辑
+ * 仅保留结构兼容性，确保主程序正常运行
+ */
 
+// 错误处理中间件：不再上报错误，仅作为透明转发
 export async function errorHandling(context) {
-  const env = context.env;
-  if (typeof env.disable_telemetry == "undefined" || env.disable_telemetry == null || env.disable_telemetry == "") {
-    context.data.telemetry = true;
-    let remoteSampleRate = 0.001;
-    try {
-      const sampleRate = await fetchSampleRate(context)
-      console.log("sampleRate", sampleRate);
-      //check if the sample rate is not null
-      if (sampleRate) {
-        remoteSampleRate = sampleRate;
-      }
-    } catch (e) { console.log(e) }
-    const sampleRate = env.sampleRate || remoteSampleRate;
-    console.log("sampleRate", sampleRate);
-    return sentryPlugin({
-      dsn: "https://219f636ac7bde5edab2c3e16885cb535@o4507041519108096.ingest.us.sentry.io/4507541492727808",
-      tracesSampleRate: sampleRate,
-    })(context);;
-  }
+  // 如果你需要本地调试，可以在这里打印 context.env
+  // 但严禁将数据发送至任何外部 URL
   return context.next();
 }
 
+// 数据统计中间件：移除所有 Headers 和 CF 信息的抓取
 export function telemetryData(context) {
-  const env = context.env;
-  if (typeof env.disable_telemetry == "undefined" || env.disable_telemetry == null || env.disable_telemetry == "") {
-    try {
-      const parsedHeaders = {};
-      context.request.headers.forEach((value, key) => {
-        parsedHeaders[key] = value
-        //check if the value is empty
-        if (value.length > 0) {
-          context.data.sentry.setTag(key, value);
-        }
-      });
-      const CF = JSON.parse(JSON.stringify(context.request.cf));
-      const parsedCF = {};
-      for (const key in CF) {
-        if (typeof CF[key] == "object") {
-          parsedCF[key] = JSON.stringify(CF[key]);
-        } else {
-          parsedCF[key] = CF[key];
-          if (CF[key].length > 0) {
-            context.data.sentry.setTag(key, CF[key]);
-          }
-        }
-      }
-      const data = {
-        headers: parsedHeaders,
-        cf: parsedCF,
-        url: context.request.url,
-        method: context.request.method,
-        redirect: context.request.redirect,
-      }
-      //get the url path
-      const urlPath = new URL(context.request.url).pathname;
-      const hostname = new URL(context.request.url).hostname;
-      context.data.sentry.setTag("path", urlPath);
-      context.data.sentry.setTag("url", data.url);
-      context.data.sentry.setTag("method", context.request.method);
-      context.data.sentry.setTag("redirect", context.request.redirect);
-      context.data.sentry.setContext("request", data);
-      const transaction = context.data.sentry.startTransaction({ name: `${context.request.method} ${hostname}` });
-      //add the transaction to the context
-      context.data.transaction = transaction;
-      return context.next();
-    } catch (e) {
-      console.log(e);
-    } finally {
-      context.data.transaction.finish();
-    }
-  }
+  // 直接进入下一步，不进行任何数据记录
   return context.next();
 }
 
+// 追踪数据中间件：空实现，防止主程序调用报错
 export async function traceData(context, span, op, name) {
-  const data = context.data
-  if (data.telemetry) {
-    if (span) {
-      console.log("span finish")
-      span.finish();
-    } else {
-      console.log("span start")
-      span = await context.data.transaction.startChild(
-        { op: op, name: name },
-      );
-    }
-  }
+  // 仅作为占位符，不执行任何逻辑
+  return;
 }
 
-async function fetchSampleRate(context) {
-  const data = context.data
-  if (data.telemetry) {
-    const url = "https://frozen-sentinel.pages.dev/signal/sampleRate.json";
-    const response = await fetch(url);
-    const json = await response.json();
-    return json.rate;
-  }
-}
+/**
+ * 额外的安全建议：
+ * 1. 建议在 Cloudflare Pages 的环境变量中删除所有关于 Sentry 的 DSN。
+ * 2. 建议删除 package.json 中关于 "@cloudflare/pages-plugin-sentry" 的依赖。
+ */
